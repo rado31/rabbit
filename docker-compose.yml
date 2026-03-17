@@ -1,0 +1,61 @@
+services:
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"   # management UI → http://localhost:15672
+    healthcheck:
+      test: rabbitmq-diagnostics ping
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: clients_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Runs automatically on first start when the data volume is empty.
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: pg_isready -U postgres -d clients_db
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  storage:
+    build:
+      context: .
+      args:
+        SERVICE: storage
+    environment:
+      AMQP_URL: amqp://guest:guest@rabbitmq:5672/
+      PG_URL: postgres://postgres:postgres@postgres:5432/clients_db
+    restart: on-failure
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      args:
+        SERVICE: api
+    environment:
+      AMQP_URL: amqp://guest:guest@rabbitmq:5672/
+      ADDR: :8080
+    ports:
+      - "8080:8080"
+    restart: on-failure
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
