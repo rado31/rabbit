@@ -1,61 +1,79 @@
 services:
 
-  rabbitmq:
-    image: rabbitmq:4-management-alpine
-    ports:
-      - "5672:5672"
-      - "15672:15672"   # management UI → http://localhost:15672
-    healthcheck:
-      test: rabbitmq-diagnostics ping
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: postgres
+      POSTGRES_USER:     postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: clients_db
+      POSTGRES_DB:       clients_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Runs automatically on first start when the data volume is empty.
       - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: pg_isready -U postgres -d clients_db
+      test:     pg_isready -U postgres -d clients_db
       interval: 5s
-      timeout: 3s
-      retries: 10
+      timeout:  3s
+      retries:  10
 
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    ports:
+      - "15672:15672"   # management UI → http://localhost:15672  (guest/guest)
+    healthcheck:
+      test:     rabbitmq-diagnostics ping
+      interval: 10s
+      timeout:  5s
+      retries:  10
+
+  # services
   storage:
     build:
-      context: .
-      args:
-        SERVICE: storage
+      context:    .
+      dockerfile: services/storage/Dockerfile
     environment:
-      AMQP_URL: amqp://guest:guest@rabbitmq:5672/
-      PG_URL: postgres://postgres:postgres@postgres:5432/clients_db
-    restart: on-failure
+      GRPC_ADDR: :50051
+      PG_URL:    postgres://postgres:postgres@postgres:5432/clients_db
+      AMQP_URL:  amqp://guest:guest@rabbitmq:5672/
     depends_on:
-      rabbitmq:
-        condition: service_healthy
       postgres:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: on-failure
 
-  api:
+  api-gateway:
     build:
-      context: .
-      args:
-        SERVICE: api
-    environment:
-      AMQP_URL: amqp://guest:guest@rabbitmq:5672/
-      ADDR: :8080
+      context:    .
+      dockerfile: services/api-gateway/Dockerfile
     ports:
       - "8080:8080"
+    environment:
+      ADDR:         :8080
+      STORAGE_ADDR: storage:50051
+    depends_on:
+      storage:
+        condition: service_started
     restart: on-failure
+
+  notification:
+    build:
+      context:    .
+      dockerfile: services/notification/Dockerfile
+    environment:
+      AMQP_URL:  amqp://guest:guest@rabbitmq:5672/
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_FROM: noreply@example.com
     depends_on:
       rabbitmq:
         condition: service_healthy
+    restart: on-failure
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"   # web UI → http://localhost:8025
+      - "1025:1025"   # SMTP
 
 volumes:
   postgres_data:

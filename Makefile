@@ -1,10 +1,16 @@
-api:
-	@go run ./cmd/api
+proto:
+	@mkdir -p proto/gen
+	protoc \
+		--proto_path=proto \
+		--go_out=proto/gen      --go_opt=paths=source_relative \
+		--go-grpc_out=proto/gen --go-grpc_opt=paths=source_relative \
+		client.proto
+	@echo "proto generated → proto/gen/"
 
-storage:
-	@go run ./cmd/storage
+up:
+	docker compose up --build
 
-migrate:
-	@psql "postgres://postgres:postgres@localhost:5432/clients_db" -f migrations/001_init.sql
+down:
+	docker compose down -v
 
-.PHONY: api storage migrate
+.PHONY: proto up down

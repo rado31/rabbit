@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package client;
+
+option go_package = "github.com/rado31/rabbit/proto/gen";
+
+message Client {
+  int32  id      = 1;
+  string surname = 2;
+  string name    = 3;
+  int32  age     = 4;
+  string email   = 5;
+}
+
+message CreateClientRequest {
+  string surname = 1;
+  string name    = 2;
+  int32  age     = 3;
+  string email   = 4;
+}
+
+message CreateClientResponse {
+  Client client = 1;
+}
+
+message GetClientRequest {
+  int32 id = 1;
+}
+
+message GetClientResponse {
+  Client client = 1;
+}
+
+service ClientService {
+  rpc CreateClient (CreateClientRequest) returns (CreateClientResponse);
+  rpc GetClient    (GetClientRequest)    returns (GetClientResponse);
+}

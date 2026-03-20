@@ -1,128 +1,125 @@
-# Rabbit example of usage
+# Rabbit
 
-Two Go services communicating over RabbitMQ using the RPC (request-reply) pattern.
+A Go microservices demo using gRPC, RabbitMQ, PostgreSQL, and SMTP.
+
+## Architecture
+
+```
+Client
+  │
+  ▼
+api-gateway   (HTTP :8080)
+  │  REST (Gin)
+  │  gRPC
+  ▼
+storage       (gRPC :50051)
+  │  pgx
+  │  PostgreSQL
+  │
+  └─ RabbitMQ ──► notification
+                    SMTP (email on registration)
+```
 
 ## Services
 
-| Service | Entry point | Role |
-|---------|-------------|------|
-| `api` | `cmd/api` | Accepts HTTP requests, publishes tasks to a queue, waits for a reply |
-| `storage` | `cmd/storage` | Listens on queues, reads/writes data in PostgreSQL, sends replies |
-
-## Stack
-
-- [gin](https://github.com/gin-gonic/gin) — HTTP server
-- [amqp091-go](https://github.com/rabbitmq/amqp091-go) — RabbitMQ client
-- [pgx](https://github.com/jackc/pgx) — PostgreSQL client
-
-## How it works
-
-```
-POST /clients
-     │
-     ▼
-  [ api ]  ── clients.create ──►  [ storage ]
-     │             RabbitMQ             │
-     │                                  ├── INSERT INTO clients
-     │                                  │
-     └──── reply queue ◄────────────────┘
-```
-
-1. `api` receives an HTTP request and publishes a message to `clients.create` or `clients.get`
-2. The message carries `ReplyTo` (the name of a private reply queue) and `CorrelationId` (a unique call ID)
-3. `api` blocks and waits for a reply (5 second timeout)
-4. `storage` processes the message, talks to PostgreSQL, and publishes the result back to `ReplyTo`
-5. `api` receives the reply, matches it by `CorrelationId`, and returns the HTTP response
-
-## Running
-
-### Docker (recommended)
-
-```bash
-docker compose up --build
-```
-
-That's it. Compose starts RabbitMQ, PostgreSQL, runs the migration automatically, then starts both services.
-
-| URL | Description |
-|-----|-------------|
-| `http://localhost:8080` | API |
-| `http://localhost:15672` | RabbitMQ management UI (guest / guest) |
-
-### Locally
-
-```bash
-# Start dependencies
-docker compose up rabbitmq postgres -d
-
-# Apply migration
-make migrate
-
-# Terminal 1
-make storage
-
-# Terminal 2
-make api
-```
-
-### Environment variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AMQP_URL` | `amqp://guest:guest@localhost:5672/` | RabbitMQ address |
-| `PG_URL` | `postgres://postgres:postgres@localhost:5432/clients_db` | PostgreSQL address |
-| `ADDR` | `:8080` | HTTP server address (`api` only) |
+| Service      | Transport | Description                                      |
+|--------------|-----------|--------------------------------------------------|
+| api-gateway  | HTTP      | Accepts REST requests, proxies to storage via gRPC |
+| storage      | gRPC      | Persists clients in PostgreSQL, publishes events to RabbitMQ |
+| notification | —         | Consumes RabbitMQ events, sends welcome emails via SMTP |
 
 ## API
 
-### Create a client
+### Create client
 
 ```
 POST /clients
 Content-Type: application/json
 
 {
-  "first_name": "Ra",
-  "last_name":  "Do",
-  "age":        26,
-  "email":      "rado@example.com"
+  "surname": "Doe",
+  "name":    "John",
+  "age":     30,
+  "email":   "john@example.com"
 }
 ```
+
+**Response** `201 Created`
 
 ```json
 {
-  "id":         1,
-  "first_name": "Ra",
-  "last_name":  "Do",
-  "age":        26,
-  "email":      "rado@example.com"
+  "id":      1,
+  "surname": "Doe",
+  "name":    "John",
+  "age":     30,
+  "email":   "john@example.com"
 }
 ```
 
-### Get a client
+### Get client
 
 ```
 GET /clients/:id
 ```
 
-```json
-{
-  "id":         1,
-  "first_name": "Ra",
-  "last_name":  "Do",
-  "age":        26,
-  "email":      "rado@example.com"
-}
+**Response** `200 OK` or `404 Not Found`
+
+## Running
+
+```bash
+make up
 ```
 
-## Project structure
+Starts all services via Docker Compose. On first run, images are built from source.
 
+```bash
+make down   # stop and remove containers + volumes
 ```
-cmd/
-  api/main.go         — HTTP API + AMQP RPC client
-  storage/main.go     — AMQP consumer + PostgreSQL
-migrations/
-  001_init.sql        — database schema
-Dockerfile            — multi-stage build (shared by both services via ARG SERVICE)
-docker-compose.yml    — full stack: api, storage, rabbitmq, postgres
+
+### Ports
+
+| Port  | Service               |
+|-------|-----------------------|
+| 8080  | api-gateway (HTTP)    |
+| 15672 | RabbitMQ management UI (guest/guest) |
+| 8025  | Mailpit web UI (captured emails) |
+
+## Development
+
+### Regenerate proto
+
+Requires `protoc`, `protoc-gen-go`, and `protoc-gen-go-grpc` installed locally.
+
+```bash
+make proto
 ```
+
+Generated files are written to `proto/gen/`.
+
+## Environment variables
+
+### storage
+
+| Variable   | Default                                    | Description        |
+|------------|--------------------------------------------|--------------------|
+| `GRPC_ADDR`| `:50051`                                   | gRPC listen address |
+| `PG_URL`   | `postgres://postgres:postgres@localhost:5432/clients_db` | PostgreSQL DSN |
+| `AMQP_URL` | `amqp://guest:guest@localhost:5672/`       | RabbitMQ URL       |
+
+### api-gateway
+
+| Variable       | Default        | Description          |
+|----------------|----------------|----------------------|
+| `ADDR`         | `:8080`        | HTTP listen address  |
+| `STORAGE_ADDR` | `localhost:50051` | Storage gRPC address |
+
+### notification
+
+| Variable    | Default                              | Description        |
+|-------------|--------------------------------------|--------------------|
+| `AMQP_URL`  | `amqp://guest:guest@localhost:5672/` | RabbitMQ URL       |
+| `SMTP_HOST` | `localhost`                          | SMTP server host   |
+| `SMTP_PORT` | `25`                                 | SMTP server port   |
+| `SMTP_USER` | —                                    | SMTP username      |
+| `SMTP_PASS` | —                                    | SMTP password      |
+| `SMTP_FROM` | `noreply@example.com`                | Sender address     |
